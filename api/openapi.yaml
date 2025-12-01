@@ -1,0 +1,229 @@
+openapi: 3.0.3
+info:
+  title: AI Personal Chef API
+  description: |
+    API для генерации рецептов на основе распознавания продуктов.
+    Все пользовательские данные (сохранённые рецепты, оценки, профиль) хранятся локально на устройстве.
+    Сервер отвечает только за анализ фото и генерацию рецептов.
+  version: 1.0.0
+  contact:
+    name: Team AI Personal Chef
+servers:
+  - url: https://api.aipersonalchef.example/v1
+    description: Production server
+
+paths:
+  /analyze:
+    post:
+      summary: Анализ фото продуктов и генерация рецептов
+      description: |
+        Принимает фото или список ингредиентов → возвращает рецепты.
+        Поддерживает два режима:
+        - `photo`: base64-изображение
+        - `manual`: ручной ввод ингредиентов
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeRequest'
+            examples:
+              photoExample:
+                summary: Анализ фото
+                value:
+                  mode: "photo"
+                  image: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP..."
+              manualExample:
+                summary: Ручной ввод
+                value:
+                  mode: "manual"
+                  ingredients: ["яйцо", "помидор", "сыр"]
+      responses:
+        '200':
+          description: Успешный анализ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResponse'
+              examples:
+                successExample:
+                  summary: Пример ответа
+                  value:
+                    recipes:
+                      - id: "ai-12345"
+                        title: "Яичница с помидорами"
+                        cooking_time_min: 15
+                        calories: 280
+                        difficulty: "easy"
+                        ingredients:
+                          - name: "яйцо"
+                            amount: 2
+                            unit: "шт"
+                          - name: "помидор"
+                            amount: 1
+                            unit: "шт"
+                        steps:
+                          - "Взбейте яйца в миске"
+                          - "Нарежьте помидор кубиками"
+                          - "Обжаривайте на сковороде 5 минут"
+        '400':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                badRequest:
+                  summary: Неверный формат запроса
+                  value:
+                    error: "INVALID_INPUT"
+                    message: "Требуется либо image, либо ingredients"
+        '429':
+          description: Превышен лимит запросов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                rateLimit:
+                  summary: Rate limiting
+                  value:
+                    error: "RATE_LIMIT_EXCEEDED"
+                    message: "Слишком много запросов. Попробуйте позже."
+
+components:
+  schemas:
+    AnalyzeRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [photo, manual]
+          example: "photo"
+        image:
+          type: string
+          description: base64-кодированное изображение (только для mode=photo)
+          example: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+        ingredients:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+          description: Список ингредиентов (только для mode=manual)
+          example: ["яйцо", "помидор"]
+      allOf:
+        - if:
+            properties:
+              mode:
+                const: "photo"
+          then:
+            required: [image]
+        - if:
+            properties:
+              mode:
+                const: "manual"
+          then:
+            required: [ingredients]
+
+    Recipe:
+      type: object
+      required: [id, title, cooking_time_min, calories, difficulty, ingredients, steps]
+      properties:
+        id:
+          type: string
+          example: "ai-12345"
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Яичница с помидорами"
+        cooking_time_min:
+          type: integer
+          minimum: 1
+          maximum: 180
+          example: 15
+        calories:
+          type: integer
+          minimum: 0
+          maximum: 5000
+          example: 280
+        difficulty:
+          type: string
+          enum: [easy, medium, hard]
+          example: "easy"
+        ingredients:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ingredient'
+          minItems: 1
+        steps:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+          minItems: 1
+          example: ["Взбейте яйца...", "Нарежьте помидор..."]
+
+    Ingredient:
+      type: object
+      required: [name, amount, unit]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: "яйцо"
+        amount:
+          type: number
+          minimum: 0.1
+          example: 2
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 20
+          example: "шт"
+
+    AnalyzeResponse:
+      type: object
+      required: [recipes]
+      properties:
+        recipes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recipe'
+          minItems: 1
+          maxItems: 5
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          example: "INVALID_INPUT"
+        message:
+          type: string
+          example: "Требуется либо image, либо ingredients"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []
+
+# Rate limiting (для документации)
+x-rate-limit:
+  description: |
+    Лимиты:
+    - 10 запросов / минуту на IP
+    - 100 запросов / день на API-ключ
+  headers:
+    - X-RateLimit-Limit: максимальное количество запросов
+    - X-RateLimit-Remaining: осталось запросов
+    - X-RateLimit-Reset: время сброса (в секундах)
